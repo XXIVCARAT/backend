@@ -10,6 +10,8 @@ import org.springframework.web.server.ResponseStatusException;
 
 @Service
 public class AuthService {
+    private static final String LOGIN_FAILURE_MESSAGE = "Account doesnot exist Or Password incorrect error";
+
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
 
@@ -42,10 +44,10 @@ public class AuthService {
         String normalized = identifier.toLowerCase();
         User user = userRepository.findByEmail(normalized)
                 .or(() -> userRepository.findByUsername(normalized))
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Account does not exist"));
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, LOGIN_FAILURE_MESSAGE));
 
         if (!passwordEncoder.matches(request.password(), user.getPasswordHash())) {
-            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Password invalid");
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, LOGIN_FAILURE_MESSAGE);
         }
 
         return new AuthResponse(user.getId(), user.getEmail());
