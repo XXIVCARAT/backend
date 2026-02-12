@@ -19,12 +19,23 @@ public class WebConfig implements WebMvcConfigurer {
         String[] origins = Arrays.stream(allowedOrigins.split(","))
                 .map(String::trim)
                 .filter(s -> !s.isEmpty())
+                .map(this::normalizeOrigin)
                 .toArray(String[]::new);
 
         registry.addMapping("/api/**")
                 .allowedOrigins(origins)
                 .allowedMethods("GET", "POST", "OPTIONS")
                 .allowedHeaders("*")
-                .allowCredentials(false);
+                .allowCredentials(true);
+    }
+
+    private String normalizeOrigin(String origin) {
+        if (origin.startsWith("http://") || origin.startsWith("https://")) {
+            return origin;
+        }
+        if (origin.startsWith("localhost") || origin.startsWith("127.0.0.1") || origin.startsWith("[::1]")) {
+            return "http://" + origin;
+        }
+        return "https://" + origin;
     }
 }

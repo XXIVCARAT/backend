@@ -3,6 +3,7 @@ package com.example.badminton.auth;
 import com.example.badminton.auth.dto.AuthResponse;
 import com.example.badminton.auth.dto.LoginRequest;
 import com.example.badminton.auth.dto.RegisterRequest;
+import com.example.badminton.stats.DashboardStatsService;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -14,10 +15,16 @@ public class AuthService {
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
+    private final DashboardStatsService dashboardStatsService;
 
-    public AuthService(UserRepository userRepository, PasswordEncoder passwordEncoder) {
+    public AuthService(
+            UserRepository userRepository,
+            PasswordEncoder passwordEncoder,
+            DashboardStatsService dashboardStatsService
+    ) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
+        this.dashboardStatsService = dashboardStatsService;
     }
 
     public AuthResponse register(RegisterRequest request) {
@@ -35,6 +42,7 @@ public class AuthService {
         user.setUsername(username);
         user.setPasswordHash(passwordEncoder.encode(request.password()));
         User saved = userRepository.save(user);
+        dashboardStatsService.initializeForUser(saved.getId());
 
         return new AuthResponse(saved.getId(), saved.getEmail(), saved.getUsername());
     }
@@ -49,6 +57,14 @@ public class AuthService {
         if (!passwordEncoder.matches(request.password(), user.getPasswordHash())) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, LOGIN_FAILURE_MESSAGE);
         }
+        dashboardStatsService.initializeForUser(user.getId());
+
+        return new AuthResponse(user.getId(), user.getEmail(), user.getUsername());
+    }
+
+    public AuthResponse getById(Long userId) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, LOGIN_FAILURE_MESSAGE));
 
         return new AuthResponse(user.getId(), user.getEmail(), user.getUsername());
     }
