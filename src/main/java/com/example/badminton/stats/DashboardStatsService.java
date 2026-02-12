@@ -34,6 +34,21 @@ public class DashboardStatsService {
     }
 
     @Transactional
+    public void recordMatchOutcome(Long userId, boolean won) {
+        initializeForUser(userId);
+        UserMatchStats stats = userMatchStatsRepository.findByUserId(userId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "User stats not found"));
+
+        if (won) {
+            stats.setMatchesWon(Math.max(0, stats.getMatchesWon()) + 1);
+        } else {
+            stats.setMatchesLost(Math.max(0, stats.getMatchesLost()) + 1);
+        }
+
+        userMatchStatsRepository.save(stats);
+    }
+
+    @Transactional
     public DashboardStatsResponse getDashboardStats(Long userId) {
         userRepository.findById(userId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found"));
