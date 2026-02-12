@@ -6,7 +6,7 @@
 
 This repository includes a `render.yaml` Blueprint that creates:
 - `badminton-db` (PostgreSQL 16)
-- `badminton-backend` (Java 21 Spring Boot web service)
+- `badminton-backend` (Dockerized Spring Boot web service)
 
 ## Required post-deploy setting
 
