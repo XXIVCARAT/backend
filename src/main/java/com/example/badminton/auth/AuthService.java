@@ -22,10 +22,10 @@ public class AuthService {
         String email = request.email().trim().toLowerCase();
         String username = request.username().trim().toLowerCase();
         if (userRepository.existsByEmail(email)) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Email already exists");
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Email id already in use");
         }
         if (userRepository.existsByUsername(username)) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Username already exists");
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Username taken");
         }
 
         User user = new User();
