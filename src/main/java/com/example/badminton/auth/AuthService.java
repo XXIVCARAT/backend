@@ -36,7 +36,7 @@ public class AuthService {
         user.setPasswordHash(passwordEncoder.encode(request.password()));
         User saved = userRepository.save(user);
 
-        return new AuthResponse(saved.getId(), saved.getEmail());
+        return new AuthResponse(saved.getId(), saved.getEmail(), saved.getUsername());
     }
 
     public AuthResponse login(LoginRequest request) {
@@ -50,6 +50,6 @@ public class AuthService {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, LOGIN_FAILURE_MESSAGE);
         }
 
-        return new AuthResponse(user.getId(), user.getEmail());
+        return new AuthResponse(user.getId(), user.getEmail(), user.getUsername());
     }
 }
