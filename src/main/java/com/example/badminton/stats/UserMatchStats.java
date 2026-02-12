@@ -26,6 +26,9 @@ public class UserMatchStats {
     @Column(nullable = false)
     private int matchesLost;
 
+    @Column(nullable = false, columnDefinition = "integer default 1000")
+    private Integer rating;
+
     @Column(nullable = false)
     private Instant createdAt;
 
@@ -40,6 +43,9 @@ public class UserMatchStats {
         }
         if (updatedAt == null) {
             updatedAt = now;
+        }
+        if (rating == null) {
+            rating = 1000;
         }
     }
 
@@ -74,5 +80,13 @@ public class UserMatchStats {
 
     public void setMatchesLost(int matchesLost) {
         this.matchesLost = matchesLost;
+    }
+
+    public Integer getRating() {
+        return rating;
+    }
+
+    public void setRating(Integer rating) {
+        this.rating = rating;
     }
 }
