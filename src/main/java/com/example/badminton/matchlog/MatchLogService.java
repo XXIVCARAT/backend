@@ -205,10 +205,6 @@ public class MatchLogService {
         MatchLogParticipant participant = matchLogParticipantRepository.findByRequestIdAndUserId(requestId, authenticatedUserId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.FORBIDDEN, "You are not part of this match"));
 
-        if (request.getCreatedByUserId().equals(authenticatedUserId)) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Creator cannot approve or reject their own request");
-        }
-
         MatchLogDecision decision = parseDecision(decisionRequest.decision());
         MatchLogStatus status = MatchLogStatus.valueOf(request.getStatus());
         boolean isSingles = MatchFormat.SINGLES.name().equalsIgnoreCase(request.getMatchFormat());
@@ -283,6 +279,11 @@ public class MatchLogService {
             Long viewerId,
             Map<Long, User> usersById
     ) {
+        MatchLogParticipant viewerRow = participants.stream()
+                .filter(p -> p.getUserId().equals(viewerId))
+                .findFirst()
+                .orElse(null);
+
         List<MatchLogParticipantResponse> participantResponses = participants.stream()
                 .map(participant -> new MatchLogParticipantResponse(
                         participant.getUserId(),
@@ -294,7 +295,9 @@ public class MatchLogService {
 
         TeamSide losingSide = losingSideFor(request);
         boolean isSingles = MatchFormat.SINGLES.name().equalsIgnoreCase(request.getMatchFormat());
-        boolean canRespond = !viewerId.equals(request.getCreatedByUserId());
+        boolean canRespond = MatchLogStatus.PENDING.name().equals(request.getStatus())
+                && viewerRow != null
+                && MatchLogDecision.PENDING.name().equals(viewerRow.getDecision());
 
         return new MatchLogRequestResponse(
                 request.getId(),
