@@ -123,13 +123,6 @@ public class MatchLogService {
         Map<Long, List<MatchLogParticipant>> participantsByRequest = allParticipants.stream()
                 .collect(Collectors.groupingBy(MatchLogParticipant::getRequestId));
 
-        Set<Long> pendingForViewer = participantsByRequest.entrySet().stream()
-                .filter(entry -> entry.getValue().stream()
-                        .anyMatch(p -> p.getUserId().equals(authenticatedUserId)
-                                && MatchLogDecision.PENDING.name().equals(p.getDecision())))
-                .map(Map.Entry::getKey)
-                .collect(Collectors.toSet());
-
         Set<Long> userIds = new LinkedHashSet<>();
         for (MatchLogParticipant participant : allParticipants) {
             userIds.add(participant.getUserId());
@@ -144,7 +137,6 @@ public class MatchLogService {
         return requestIds.stream()
                 .map(requestsById::get)
                 .filter(request -> request != null)
-                .filter(request -> pendingForViewer.contains(request.getId()))
                 .sorted((a, b) -> b.getCreatedAt().compareTo(a.getCreatedAt()))
                 .map(request -> toResponse(
                         request,
@@ -213,8 +205,13 @@ public class MatchLogService {
         MatchLogParticipant participant = matchLogParticipantRepository.findByRequestIdAndUserId(requestId, authenticatedUserId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.FORBIDDEN, "You are not part of this match"));
 
+        if (request.getCreatedByUserId().equals(authenticatedUserId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Creator cannot approve or reject their own request");
+        }
+
         MatchLogDecision decision = parseDecision(decisionRequest.decision());
         MatchLogStatus status = MatchLogStatus.valueOf(request.getStatus());
+        boolean isSingles = MatchFormat.SINGLES.name().equalsIgnoreCase(request.getMatchFormat());
 
         if (!MatchLogDecision.PENDING.name().equals(participant.getDecision())) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Decision already submitted");
@@ -228,7 +225,7 @@ public class MatchLogService {
             if (decision == MatchLogDecision.REJECTED) {
                 request.setStatus(MatchLogStatus.REJECTED.name());
                 matchLogRequestRepository.save(request);
-            } else if (losingSideAccepted(requestId, losingSideFor(request))) {
+            } else if (shouldAutoApprove(request, isSingles)) {
                 request.setStatus(MatchLogStatus.APPROVED.name());
                 matchLogRequestRepository.save(request);
                 applyApprovedResult(request);
@@ -304,6 +301,7 @@ public class MatchLogService {
         boolean canRespond = MatchLogStatus.PENDING.name().equals(request.getStatus())
                 && participants.stream()
                 .anyMatch(participant -> participant.getUserId().equals(viewerId)
+                        && !viewerId.equals(request.getCreatedByUserId())
                         && MatchLogDecision.PENDING.name().equals(participant.getDecision()));
 
         return new MatchLogRequestResponse(
@@ -326,8 +324,17 @@ public class MatchLogService {
                 .allMatch(participant -> MatchLogDecision.ACCEPTED.name().equals(participant.getDecision()));
     }
 
-    private boolean losingSideAccepted(Long requestId, TeamSide losingSide) {
-        return matchLogParticipantRepository.findByRequestId(requestId).stream()
+    private boolean shouldAutoApprove(MatchLogRequest request, boolean isSingles) {
+        List<MatchLogParticipant> participants = matchLogParticipantRepository.findByRequestId(request.getId());
+        if (isSingles) {
+            return participants.stream()
+                    .anyMatch(p ->
+                            !p.getUserId().equals(request.getCreatedByUserId())
+                                    && MatchLogDecision.ACCEPTED.name().equals(p.getDecision()));
+        }
+
+        TeamSide losingSide = losingSideFor(request);
+        return participants.stream()
                 .anyMatch(participant ->
                         participant.getTeamSide().equals(losingSide.name())
                                 && MatchLogDecision.ACCEPTED.name().equals(participant.getDecision()));
