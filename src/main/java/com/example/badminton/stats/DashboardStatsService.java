@@ -12,6 +12,8 @@ public class DashboardStatsService {
     private static final int DEFAULT_MATCHES_WON = 0;
     private static final int DEFAULT_MATCHES_LOST = 0;
     private static final int DEFAULT_RATING = 1000;
+    private static final int RATING_DELTA_WIN = 25;
+    private static final int RATING_DELTA_LOSS = 15;
 
     private final UserRepository userRepository;
     private final UserMatchStatsRepository userMatchStatsRepository;
@@ -41,8 +43,10 @@ public class DashboardStatsService {
 
         if (won) {
             stats.setMatchesWon(Math.max(0, stats.getMatchesWon()) + 1);
+            stats.setRating(normalizeRating(stats.getRating() + RATING_DELTA_WIN));
         } else {
             stats.setMatchesLost(Math.max(0, stats.getMatchesLost()) + 1);
+            stats.setRating(normalizeRating(stats.getRating() - RATING_DELTA_LOSS));
         }
 
         userMatchStatsRepository.save(stats);
@@ -103,10 +107,10 @@ public class DashboardStatsService {
     }
 
     private int normalizeRating(Integer rating) {
-        if (rating == null || rating < 1) {
+        if (rating == null) {
             return DEFAULT_RATING;
         }
-        return rating;
+        return Math.max(1, rating);
     }
 
     private int toRank(long rankValue) {

@@ -4,6 +4,7 @@ import com.example.badminton.auth.AuthConstants;
 import com.example.badminton.auth.AuthSessionService;
 import com.example.badminton.matchlog.dto.CreateMatchLogRequest;
 import com.example.badminton.matchlog.dto.MatchLogDecisionRequest;
+import com.example.badminton.matchlog.dto.MatchHistoryItemResponse;
 import com.example.badminton.matchlog.dto.MatchLogRequestResponse;
 import jakarta.validation.Valid;
 import java.util.List;
@@ -54,5 +55,13 @@ public class MatchLogController {
     ) {
         Long userId = authSessionService.requireAuthenticatedUserId(token);
         return matchLogService.respond(userId, requestId, request);
+    }
+
+    @GetMapping("/history")
+    public List<MatchHistoryItemResponse> history(
+            @CookieValue(name = AuthConstants.AUTH_COOKIE_NAME, required = false) String token
+    ) {
+        Long userId = authSessionService.requireAuthenticatedUserId(token);
+        return matchLogService.history(userId);
     }
 }

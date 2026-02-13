@@ -4,6 +4,7 @@ import com.example.badminton.auth.User;
 import com.example.badminton.auth.UserRepository;
 import com.example.badminton.matchlog.dto.CreateMatchLogRequest;
 import com.example.badminton.matchlog.dto.MatchLogDecisionRequest;
+import com.example.badminton.matchlog.dto.MatchHistoryItemResponse;
 import com.example.badminton.matchlog.dto.MatchLogParticipantResponse;
 import com.example.badminton.matchlog.dto.MatchLogRequestResponse;
 import com.example.badminton.stats.DashboardStatsService;
@@ -146,6 +147,52 @@ public class MatchLogService {
                 .toList();
     }
 
+    @Transactional(readOnly = true)
+    public List<MatchHistoryItemResponse> history(Long authenticatedUserId) {
+        List<MatchLogParticipant> userRows = matchLogParticipantRepository.findByUserIdOrderByCreatedAtDesc(authenticatedUserId);
+        if (userRows.isEmpty()) {
+            return List.of();
+        }
+
+        List<Long> requestIds = userRows.stream()
+                .map(MatchLogParticipant::getRequestId)
+                .distinct()
+                .toList();
+
+        Map<Long, MatchLogRequest> requestsById = matchLogRequestRepository.findAllById(requestIds).stream()
+                .filter(request -> MatchLogStatus.APPROVED.name().equals(request.getStatus()))
+                .collect(Collectors.toMap(MatchLogRequest::getId, Function.identity()));
+        if (requestsById.isEmpty()) {
+            return List.of();
+        }
+
+        List<MatchLogParticipant> allParticipants = matchLogParticipantRepository.findByRequestIdIn(requestsById.keySet());
+        Map<Long, List<MatchLogParticipant>> participantsByRequest = allParticipants.stream()
+                .collect(Collectors.groupingBy(MatchLogParticipant::getRequestId));
+
+        Set<Long> userIds = new LinkedHashSet<>();
+        for (MatchLogParticipant participant : allParticipants) {
+            userIds.add(participant.getUserId());
+        }
+        for (MatchLogRequest request : requestsById.values()) {
+            userIds.add(request.getCreatedByUserId());
+        }
+
+        Map<Long, User> usersById = userRepository.findAllById(userIds).stream()
+            .collect(Collectors.toMap(User::getId, Function.identity()));
+
+        return requestsById.values().stream()
+                .sorted((a, b) -> b.getCreatedAt().compareTo(a.getCreatedAt()))
+                .map(request -> toHistoryItem(
+                        request,
+                        participantsByRequest.getOrDefault(request.getId(), List.of()),
+                        authenticatedUserId,
+                        usersById
+                ))
+                .filter(item -> item != null)
+                .toList();
+    }
+
     @Transactional
     public MatchLogRequestResponse respond(
             Long authenticatedUserId,
@@ -161,13 +208,31 @@ public class MatchLogService {
         MatchLogDecision decision = parseDecision(decisionRequest.decision());
         MatchLogStatus status = MatchLogStatus.valueOf(request.getStatus());
         TeamSide losingSide = losingSideFor(request);
+        boolean isSingles = MatchFormat.SINGLES.name().equalsIgnoreCase(request.getMatchFormat());
+        boolean participantOnLosingSide = participant.getTeamSide().equals(losingSide.name());
+        boolean participantCanRespond = participantOnLosingSide || isSingles;
 
-        if (!participant.getTeamSide().equals(losingSide.name())) {
+        if (!participantCanRespond) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Only losing team can approve or reject");
         }
 
+        // If everything is already accepted in singles, allow the winner to finalize.
+        if (status == MatchLogStatus.PENDING && allParticipantsAccepted(requestId)) {
+            request.setStatus(MatchLogStatus.APPROVED.name());
+            matchLogRequestRepository.save(request);
+            applyApprovedResult(request);
+            List<MatchLogParticipant> participants = matchLogParticipantRepository.findByRequestId(requestId);
+            Set<Long> userIds = collectUserIds(participants, List.of(request));
+            Map<Long, User> usersById = userRepository.findAllById(userIds).stream()
+                    .collect(Collectors.toMap(User::getId, Function.identity()));
+            return toResponse(request, participants, authenticatedUserId, usersById);
+        }
+
         if (!MatchLogDecision.PENDING.name().equals(participant.getDecision())) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Decision already submitted");
+            // For singles, winner can "confirm" with ACCEPT even if already accepted; otherwise block.
+            if (!(isSingles && decision == MatchLogDecision.ACCEPTED)) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "Decision already submitted");
+            }
         }
 
         if (status == MatchLogStatus.PENDING && decision != MatchLogDecision.PENDING) {
@@ -250,13 +315,17 @@ public class MatchLogService {
                 .toList();
 
         TeamSide losingSide = losingSideFor(request);
+        boolean isSingles = MatchFormat.SINGLES.name().equalsIgnoreCase(request.getMatchFormat());
         boolean canRespond = MatchLogStatus.PENDING.name().equals(request.getStatus())
                 && participants.stream()
-                .anyMatch(participant ->
-                        participant.getUserId().equals(viewerId)
-                                && participant.getTeamSide().equals(losingSide.name())
-                                && MatchLogDecision.PENDING.name().equals(participant.getDecision())
-                );
+                .anyMatch(participant -> {
+                    boolean isViewer = participant.getUserId().equals(viewerId);
+                    boolean isPending = MatchLogDecision.PENDING.name().equals(participant.getDecision());
+                    boolean isOnLosingSide = participant.getTeamSide().equals(losingSide.name());
+                    boolean isWinnerSide = participant.getTeamSide().equals(request.getWinnerSide());
+                    boolean singlesWinnerCanRespond = isSingles && isWinnerSide;
+                    return isViewer && ((isPending && (isOnLosingSide || isSingles)) || singlesWinnerCanRespond);
+                });
 
         return new MatchLogRequestResponse(
                 request.getId(),
@@ -302,6 +371,45 @@ public class MatchLogService {
             ids.add(request.getCreatedByUserId());
         }
         return ids;
+    }
+
+    private MatchHistoryItemResponse toHistoryItem(
+            MatchLogRequest request,
+            List<MatchLogParticipant> participants,
+            Long viewerId,
+            Map<Long, User> usersById
+    ) {
+        MatchLogParticipant myRow = participants.stream()
+                .filter(p -> p.getUserId().equals(viewerId))
+                .findFirst()
+                .orElse(null);
+        if (myRow == null) {
+            return null;
+        }
+
+        boolean userWon = myRow.getTeamSide().equals(request.getWinnerSide());
+        List<String> teamUsernames = participants.stream()
+                .filter(p -> p.getTeamSide().equals(TeamSide.TEAM.name()))
+                .map(p -> usernameFor(p.getUserId(), usersById))
+                .toList();
+        List<String> opponentUsernames = participants.stream()
+                .filter(p -> p.getTeamSide().equals(TeamSide.OPPONENT.name()))
+                .map(p -> usernameFor(p.getUserId(), usersById))
+                .toList();
+
+        return new MatchHistoryItemResponse(
+                request.getId(),
+                request.getMatchName(),
+                request.getMatchFormat(),
+                request.getPoints(),
+                request.getWinnerSide(),
+                usernameFor(request.getCreatedByUserId(), usersById),
+                request.getCreatedAt(),
+                userWon,
+                myRow.getTeamSide(),
+                teamUsernames,
+                opponentUsernames
+        );
     }
 
     private List<Long> normalizeUsers(List<Long> userIds) {
