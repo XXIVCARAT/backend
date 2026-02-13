@@ -213,10 +213,6 @@ public class MatchLogService {
         MatchLogStatus status = MatchLogStatus.valueOf(request.getStatus());
         boolean isSingles = MatchFormat.SINGLES.name().equalsIgnoreCase(request.getMatchFormat());
 
-        if (!MatchLogDecision.PENDING.name().equals(participant.getDecision())) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Decision already submitted");
-        }
-
         if (status == MatchLogStatus.PENDING && decision != MatchLogDecision.PENDING) {
             participant.setDecision(decision.name());
             participant.setRespondedAt(Instant.now());
@@ -301,8 +297,7 @@ public class MatchLogService {
         boolean canRespond = MatchLogStatus.PENDING.name().equals(request.getStatus())
                 && participants.stream()
                 .anyMatch(participant -> participant.getUserId().equals(viewerId)
-                        && !viewerId.equals(request.getCreatedByUserId())
-                        && MatchLogDecision.PENDING.name().equals(participant.getDecision()));
+                        && !viewerId.equals(request.getCreatedByUserId()));
 
         return new MatchLogRequestResponse(
                 request.getId(),
