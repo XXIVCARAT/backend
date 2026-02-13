@@ -123,6 +123,13 @@ public class MatchLogService {
         Map<Long, List<MatchLogParticipant>> participantsByRequest = allParticipants.stream()
                 .collect(Collectors.groupingBy(MatchLogParticipant::getRequestId));
 
+        Set<Long> pendingForViewer = participantsByRequest.entrySet().stream()
+                .filter(entry -> entry.getValue().stream()
+                        .anyMatch(p -> p.getUserId().equals(authenticatedUserId)
+                                && MatchLogDecision.PENDING.name().equals(p.getDecision())))
+                .map(Map.Entry::getKey)
+                .collect(Collectors.toSet());
+
         Set<Long> userIds = new LinkedHashSet<>();
         for (MatchLogParticipant participant : allParticipants) {
             userIds.add(participant.getUserId());
@@ -137,6 +144,7 @@ public class MatchLogService {
         return requestIds.stream()
                 .map(requestsById::get)
                 .filter(request -> request != null)
+                .filter(request -> pendingForViewer.contains(request.getId()))
                 .sorted((a, b) -> b.getCreatedAt().compareTo(a.getCreatedAt()))
                 .map(request -> toResponse(
                         request,
@@ -207,32 +215,9 @@ public class MatchLogService {
 
         MatchLogDecision decision = parseDecision(decisionRequest.decision());
         MatchLogStatus status = MatchLogStatus.valueOf(request.getStatus());
-        TeamSide losingSide = losingSideFor(request);
-        boolean isSingles = MatchFormat.SINGLES.name().equalsIgnoreCase(request.getMatchFormat());
-        boolean participantOnLosingSide = participant.getTeamSide().equals(losingSide.name());
-        boolean participantCanRespond = participantOnLosingSide || isSingles;
-
-        if (!participantCanRespond) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Only losing team can approve or reject");
-        }
-
-        // If everything is already accepted in singles, allow the winner to finalize.
-        if (status == MatchLogStatus.PENDING && allParticipantsAccepted(requestId)) {
-            request.setStatus(MatchLogStatus.APPROVED.name());
-            matchLogRequestRepository.save(request);
-            applyApprovedResult(request);
-            List<MatchLogParticipant> participants = matchLogParticipantRepository.findByRequestId(requestId);
-            Set<Long> userIds = collectUserIds(participants, List.of(request));
-            Map<Long, User> usersById = userRepository.findAllById(userIds).stream()
-                    .collect(Collectors.toMap(User::getId, Function.identity()));
-            return toResponse(request, participants, authenticatedUserId, usersById);
-        }
 
         if (!MatchLogDecision.PENDING.name().equals(participant.getDecision())) {
-            // For singles, winner can "confirm" with ACCEPT even if already accepted; otherwise block.
-            if (!(isSingles && decision == MatchLogDecision.ACCEPTED)) {
-                throw new ResponseStatusException(HttpStatus.CONFLICT, "Decision already submitted");
-            }
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Decision already submitted");
         }
 
         if (status == MatchLogStatus.PENDING && decision != MatchLogDecision.PENDING) {
@@ -243,7 +228,7 @@ public class MatchLogService {
             if (decision == MatchLogDecision.REJECTED) {
                 request.setStatus(MatchLogStatus.REJECTED.name());
                 matchLogRequestRepository.save(request);
-            } else if (allParticipantsAccepted(requestId)) {
+            } else if (losingSideAccepted(requestId, losingSideFor(request))) {
                 request.setStatus(MatchLogStatus.APPROVED.name());
                 matchLogRequestRepository.save(request);
                 applyApprovedResult(request);
@@ -271,7 +256,7 @@ public class MatchLogService {
         participant.setUserId(userId);
         participant.setTeamSide(teamSide.name());
 
-        if (teamSide == winnerSide || userId.equals(authenticatedUserId)) {
+        if (teamSide == winnerSide) {
             participant.setDecision(MatchLogDecision.ACCEPTED.name());
             participant.setRespondedAt(now);
         } else {
@@ -318,14 +303,8 @@ public class MatchLogService {
         boolean isSingles = MatchFormat.SINGLES.name().equalsIgnoreCase(request.getMatchFormat());
         boolean canRespond = MatchLogStatus.PENDING.name().equals(request.getStatus())
                 && participants.stream()
-                .anyMatch(participant -> {
-                    boolean isViewer = participant.getUserId().equals(viewerId);
-                    boolean isPending = MatchLogDecision.PENDING.name().equals(participant.getDecision());
-                    boolean isOnLosingSide = participant.getTeamSide().equals(losingSide.name());
-                    boolean isWinnerSide = participant.getTeamSide().equals(request.getWinnerSide());
-                    boolean singlesWinnerCanRespond = isSingles && isWinnerSide;
-                    return isViewer && ((isPending && (isOnLosingSide || isSingles)) || singlesWinnerCanRespond);
-                });
+                .anyMatch(participant -> participant.getUserId().equals(viewerId)
+                        && MatchLogDecision.PENDING.name().equals(participant.getDecision()));
 
         return new MatchLogRequestResponse(
                 request.getId(),
@@ -345,6 +324,13 @@ public class MatchLogService {
     private boolean allParticipantsAccepted(Long requestId) {
         return matchLogParticipantRepository.findByRequestId(requestId).stream()
                 .allMatch(participant -> MatchLogDecision.ACCEPTED.name().equals(participant.getDecision()));
+    }
+
+    private boolean losingSideAccepted(Long requestId, TeamSide losingSide) {
+        return matchLogParticipantRepository.findByRequestId(requestId).stream()
+                .anyMatch(participant ->
+                        participant.getTeamSide().equals(losingSide.name())
+                                && MatchLogDecision.ACCEPTED.name().equals(participant.getDecision()));
     }
 
     private TeamSide losingSideFor(MatchLogRequest request) {
