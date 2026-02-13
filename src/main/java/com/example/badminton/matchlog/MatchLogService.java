@@ -294,8 +294,7 @@ public class MatchLogService {
 
         TeamSide losingSide = losingSideFor(request);
         boolean isSingles = MatchFormat.SINGLES.name().equalsIgnoreCase(request.getMatchFormat());
-        boolean canRespond = MatchLogStatus.PENDING.name().equals(request.getStatus())
-                && !viewerId.equals(request.getCreatedByUserId());
+        boolean canRespond = !viewerId.equals(request.getCreatedByUserId());
 
         return new MatchLogRequestResponse(
                 request.getId(),
